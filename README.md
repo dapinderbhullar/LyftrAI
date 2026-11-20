@@ -46,6 +46,7 @@ Vite uses `http://localhost:8000` by default. Set `VITE_API_URL` in the frontend
 | --- | --- |
 | `LLM_API_KEYS` | Server-only comma-separated keys, in attempt order |
 | `LLM_MODEL` | LiteLLM provider and model identifier |
+| `LITELLM_LOCAL_MODEL_COST_MAP` | Use LiteLLM's bundled model metadata to avoid an external fetch during import. Defaults to `True` in the backend image. |
 | `DATABASE_URL` | SQLite file URL, with four slashes for an absolute Unix path |
 | `ALLOWED_ORIGINS` | Comma-separated browser origins |
 | `ENABLE_FAILURE_SIMULATION` | Enables the request-scoped failure header when set to `true` |
