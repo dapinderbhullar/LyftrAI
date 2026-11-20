@@ -8,8 +8,9 @@ A multi-turn chatbot with React, FastAPI, LiteLLM and SQLite. The browser sends 
 | --- | --- |
 | Public GitHub repository | [dapinderbhullar/LyftrAI](https://github.com/dapinderbhullar/LyftrAI) |
 | Render backend | [lyftrai-backend.onrender.com](https://lyftrai-backend.onrender.com) |
+| Vercel frontend | [lyftr-ai-dusky.vercel.app](https://lyftr-ai-dusky.vercel.app/) |
 
-The public frontend and voice recording are pending.
+The frontend is public. Live backend verification and the voice recording are pending.
 
 On the existing Render backend, use Docker with `backend/` as the root directory, one worker, and `/health` as the health probe. Under **Environment**, set `LLM_API_KEYS` to two working keys for the configured `LLM_MODEL`, `DATABASE_URL=sqlite:////data/app.db`, and `ENABLE_FAILURE_SIMULATION=true`. Render sets `PORT` for its web service. Keep the keys in Render only.
 
