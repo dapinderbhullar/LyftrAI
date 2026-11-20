@@ -8,7 +8,7 @@ A multi-turn chatbot with React, FastAPI, LiteLLM and SQLite. The browser sends 
 | --- | --- |
 | Frontend | Pending deployment |
 | Backend | Pending deployment |
-| Public GitHub repository | Pending publication |
+| Public GitHub repository | [dapinderbhullar/LyftrAI](https://github.com/dapinderbhullar/LyftrAI) |
 | Voice demo | Pending recording |
 
 Deploy the backend Dockerfile on a Docker host with a persistent disk mounted at `/data`. Set `LLM_API_KEYS` to two working keys authorized for the configured `LLM_MODEL`. Set `DATABASE_URL=sqlite:////data/app.db` and `ENABLE_FAILURE_SIMULATION=true`. Use one Uvicorn worker and one replica. Use `/health` for the health check. Deploy the frontend from `frontend/` with `npm install && npm run build` and publish `dist/`. Set `VITE_API_URL` to the public HTTPS backend URL before the frontend build and set the backend's `ALLOWED_ORIGINS` to the exact HTTPS frontend origin.
@@ -88,6 +88,8 @@ Expect live inference followed by an identical cached reply with a null key ID a
 Run backend tests from `backend/` with `python -m pip install -r requirements.txt pytest httpx` and `python -m pytest -q`. The tests replace the provider call while using real SQLite and LiteLLM's cache.
 
 From `frontend/`, run `npm ci`, `npx playwright install chromium` and `npx playwright test` for the browser suite. To use installed Edge, set `PLAYWRIGHT_BROWSER_CHANNEL=msedge` before running the suite. `npm run build` verifies the production bundle.
+
+Verification passed for 16 backend tests, 3 Edge browser tests, and the production bundle. GitHub Actions built and started both Docker services and verified SQLite history after a Compose teardown and restart. Provider-backed inference and the public deployment are pending. [Docker workflow run](https://github.com/dapinderbhullar/LyftrAI/actions/runs/44811950958).
 
 See the [requirements audit](docs/audit.md) for verified behavior and deployment checks, and the [timed voice demo script](docs/demo.md) for exact recording commands.
 

@@ -69,3 +69,31 @@ test('shows a readable error, restores the message and starts a fresh session on
   expect(sessions).toHaveLength(2)
   expect(sessions[0]).not.toBe(sessions[1])
 })
+
+test('shows validation errors and scrolls the latest turn into view on mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 650 })
+  let requests = 0
+  await page.route(endpoint, route => {
+    requests++
+    if (requests === 1) {
+      return route.fulfill({ json: { reply: 'Long answer.\n'.repeat(60), metadata } })
+    }
+    return route.fulfill({
+      status: 422,
+      json: { detail: [{ loc: ['body', 'message'], msg: 'Invalid message' }] },
+    })
+  })
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'What’s on your mind?' })).toBeVisible()
+  const input = page.getByTestId('chat-input')
+  await page.getByRole('button', { name: 'Explain how a rainbow forms' }).click()
+  await expect(input).toHaveValue('Explain how a rainbow forms')
+  await page.getByTestId('send-button').click()
+  await expect(page.getByTestId('meta-output-tokens')).toBeInViewport()
+  await input.fill('Rejected message')
+  await page.getByTestId('send-button').click()
+  const error = page.getByRole('alert')
+  await expect(error).toContainText('Check your input and try again')
+  await expect(error).toBeInViewport()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390)
+})
