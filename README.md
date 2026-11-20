@@ -6,14 +6,18 @@ A multi-turn chatbot with React, FastAPI, LiteLLM and SQLite. The browser sends 
 
 | Deliverable | URL |
 | --- | --- |
-| Frontend | Pending deployment |
-| Backend | Pending deployment |
 | Public GitHub repository | [dapinderbhullar/LyftrAI](https://github.com/dapinderbhullar/LyftrAI) |
-| Voice demo | Pending recording |
+| Render backend | [lyftrai-backend.onrender.com](https://lyftrai-backend.onrender.com) |
 
-Deploy the backend Dockerfile on a Docker host with a persistent disk mounted at `/data`. Set `LLM_API_KEYS` to two working keys authorized for the configured `LLM_MODEL`. Set `DATABASE_URL=sqlite:////data/app.db` and `ENABLE_FAILURE_SIMULATION=true`. Use one Uvicorn worker and one replica. Use `/health` for the health check. Deploy the frontend from `frontend/` with `npm install && npm run build` and publish `dist/`. Set `VITE_API_URL` to the public HTTPS backend URL before the frontend build and set the backend's `ALLOWED_ORIGINS` to the exact HTTPS frontend origin.
+The public frontend and voice recording are pending.
 
-To use the supplied [Render Blueprint](render.yaml), connect this repository in the Render dashboard and select **New → Blueprint**. Review the paid backend plan and persistent disk before applying. Set `LLM_API_KEYS` in the dashboard. Copy the two actual service URLs from Render, then set `ALLOWED_ORIGINS` on the backend and `VITE_API_URL` on the frontend and redeploy. [Render Blueprint reference](https://render.com/docs/blueprint-spec), [persistent disks](https://render.com/docs/disks).
+On the existing Render backend, use Docker with `backend/` as the root directory, one worker, and `/health` as the health probe. Under **Environment**, set `LLM_API_KEYS` to two working keys for the configured `LLM_MODEL`, `DATABASE_URL=sqlite:////data/app.db`, and `ENABLE_FAILURE_SIMULATION=true`. Render sets `PORT` for its web service. Keep the keys in Render only.
+
+For the frontend, import this repository into Vercel on Hobby, select Vite and set the root directory to `frontend`. Set the production variable `VITE_API_URL=https://lyftrai-backend.onrender.com` before deploying. The build command is `npm run build` and output directory is `dist`. Once the frontend URL is assigned, set Render's `ALLOWED_ORIGINS` to that exact HTTPS origin and redeploy the backend. Render Static Sites can use the same Vite settings. The [Render Blueprint](render.yaml) describes a new pair of free Render services.
+
+### Known limitations
+
+Render Free uses an ephemeral filesystem. SQLite history is available while the instance is running and is lost on spin-down, restart, or redeploy. Cold starts can delay the first request. Docker Compose still persists history in its named volume on a durable host. The [Oracle Cloud Always Free migration plan](docs/oracle-migration.md) describes how to preserve SQLite storage without purchasing a Render disk. [Render Free service limits](https://render.com/docs/free).
 
 ## Run locally: with Docker and without
 

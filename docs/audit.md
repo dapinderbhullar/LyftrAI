@@ -15,7 +15,7 @@
 | CORS and build-time API URL | Partially implemented | Local preflight tests verify allowed and denied origins. Public origin configuration remains pending. |
 | Multi-stage images and Make targets | Fully implemented and verified | The Linux GitHub runner built both images and ran make up and make down. [Docker workflow run](https://github.com/dapinderbhullar/LyftrAI/actions/runs/44811950958). |
 | Environment and secret hygiene | Fully implemented and verified | Placeholder sample configuration, secret ignore rules and server-only key handling. |
-| Public hosting | Missing | Render Blueprint prepared. Requires a hosting account, approval for a persistent disk on a paid backend, and two working keys. |
+| Public hosting | Partially implemented | Render Free backend URL supplied. The frontend still needs deployment and the live flow needs verification. Render Free storage is ephemeral. See the Oracle Cloud migration plan for an Always Free option. |
 | Public GitHub repository | Fully implemented and verified | Pushed to main and confirmed public access through the GitHub API. |
 | README and demo walkthrough | Fully implemented and verified | Setup, API, test and deployment documentation plus a timed demo walkthrough are in the repo. |
 | Public voice demo and submission | Missing | Requires public deployment and voice recording. |
