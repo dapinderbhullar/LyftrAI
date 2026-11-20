@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: lyftr-chat-api
+    runtime: docker
+    rootDir: backend
+    plan: starter
+    numInstances: 1
+    healthCheckPath: /health
+    disk:
+      name: lyftr-history
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: DATABASE_URL
+        value: sqlite:////data/app.db
+      - key: ENABLE_FAILURE_SIMULATION
+        value: "true"
+      - key: LLM_MODEL
+        value: openai/gpt-4o-mini
+      - key: LLM_API_KEYS
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
+  - type: web
+    name: lyftr-chat-web
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_URL
+        sync: false

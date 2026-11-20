@@ -1,0 +1,37 @@
+name: Docker smoke test
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  compose:
+    runs-on: ubuntu-latest
+    env:
+      LLM_API_KEYS: ci-placeholder-one,ci-placeholder-two
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start both services
+        run: |
+          make up
+          curl --fail --retry 20 --retry-all-errors --retry-delay 2 http://localhost:8000/health
+          curl --fail --retry 10 --retry-all-errors http://localhost:3000/
+      - name: Verify SQLite volume survives a Compose teardown
+        run: |
+          docker compose exec -T backend python - <<'PY'
+          import sqlite3
+          with sqlite3.connect("/data/app.db") as db:
+              db.execute(
+                  "INSERT INTO messages(session_id, role, content, created_at) VALUES (?, ?, ?, ?)",
+                  ("docker-smoke", "user", "Persistence check", "2026-01-01T00:00:00+00:00"),
+              )
+          PY
+          make down
+          make up
+          curl --fail --retry 20 --retry-all-errors --retry-delay 2 http://localhost:8000/health
+          curl --fail --silent http://localhost:8000/sessions/docker-smoke/messages |
+            python -c 'import json,sys; assert json.load(sys.stdin)["messages"] == [{"role":"user","content":"Persistence check"}]'
+      - name: Print service logs on failure
+        if: failure()
+        run: docker compose logs
+      - name: Tear down
+        if: always()
+        run: make down
