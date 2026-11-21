@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { join } from 'node:path'
 
 const endpoint = 'http://localhost:8000/chat'
 const metadata = {
@@ -8,6 +9,113 @@ const metadata = {
   input_tokens: 19,
   output_tokens: 7,
 }
+
+async function capture(page, name) {
+  if (process.env.LYFTR_SCREENSHOTS) {
+    await page.screenshot({ path: join(process.env.LYFTR_SCREENSHOTS, name), animations: 'disabled' })
+  }
+}
+
+test('navigation and themes work across desktop, tablet and mobile widths', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'What’s on your mind?' })).toBeVisible()
+  await capture(page, 'lyftr-desktop-dark.png')
+  await page.getByRole('button', { name: 'Switch to light mode' }).click()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
+  await page.reload()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
+
+  for (const width of [1440, 1024, 768, 390, 360]) {
+    await page.setViewportSize({ width, height: 800 })
+    const open = page.getByRole('button', { name: 'Open navigation' })
+    await expect(page.getByTestId('chat-input')).toBeInViewport()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width)
+    if (width <= 800) {
+      await open.click()
+      await expect(page.getByRole('button', { name: 'Close navigation' })).toBeFocused()
+      await page.keyboard.press('Escape')
+      await expect(open).toBeFocused()
+    } else {
+      await expect(open).toBeHidden()
+      await expect(page.getByRole('button', { name: 'New chat' })).toBeVisible()
+    }
+  }
+  await page.setViewportSize({ width: 390, height: 800 })
+  await page.getByRole('heading', { name: 'What’s on your mind?' }).click()
+  await capture(page, 'lyftr-mobile-light.png')
+  await page.getByRole('button', { name: 'Open navigation' }).click()
+  await page.setViewportSize({ width: 1024, height: 800 })
+  await expect(page.getByTestId('chat-input')).toBeFocused()
+})
+
+test('copies replies and code, labels cached replies and starts a new chat', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const markdown = [
+    '### A small Python example', '',
+    'This loop prints each item from a list.', '',
+    '- Put your values in the list.',
+    '- Use `for` to visit each value.', '',
+    '```python', 'for name in ["Ada", "Lin"]:', '    print(name)', '```', '',
+    '| Step | Result |', '| --- | --- |', '| Loop | Visits both names |', '| Print | Writes one line per name |',
+  ].join('\n')
+  const requests = []
+  await page.route(endpoint, route => {
+    requests.push(route.request().postDataJSON())
+    const cached = requests.length === 2
+    return route.fulfill({ json: { reply: markdown, metadata: cached
+      ? { ...metadata, resolution_source: 'LLM_CACHE', latency_ms: 1 } : metadata } })
+  })
+  await page.goto('/')
+  const input = page.getByTestId('chat-input')
+  await input.fill('Show me a small Python loop.')
+  await input.press('Enter')
+  const reply = page.getByTestId('assistant-message').first()
+  await expect(reply.getByText('Live response')).toBeVisible()
+  await capture(page, 'lyftr-desktop-conversation.png')
+  const copyCode = reply.getByRole('button', { name: 'Copy code' })
+  await copyCode.click()
+  await expect(copyCode).toHaveText('Copied')
+  expect((await page.evaluate(() => navigator.clipboard.readText())).replaceAll('\r\n', '\n')).toBe('for name in ["Ada", "Lin"]:\n    print(name)\n')
+  const copyReply = reply.getByRole('button', { name: 'Copy response' })
+  await copyReply.click()
+  await expect(copyReply).toHaveText('Copied')
+  expect((await page.evaluate(() => navigator.clipboard.readText())).replaceAll('\r\n', '\n')).toBe(markdown)
+
+  await input.fill('Show me a small Python loop.')
+  await input.press('Enter')
+  await expect(page.getByTestId('assistant-message').last().getByText('Cached response')).toBeVisible()
+  await expect(page.getByTestId('assistant-message').last().getByTestId('meta-latency')).toHaveText('1 ms')
+  await capture(page, 'lyftr-cached-response.png')
+  await page.getByRole('button', { name: 'New chat' }).click()
+  await expect(page.getByTestId('assistant-message')).toHaveCount(0)
+  await input.fill('New session')
+  await input.press('Enter')
+  await expect(page.getByTestId('assistant-message')).toHaveCount(1)
+  expect(requests[0].session_id).toBe(requests[1].session_id)
+  expect(requests[2].session_id).not.toBe(requests[0].session_id)
+})
+
+test('retries a provider 503 in the same session without duplicating the turn', async ({ page }) => {
+  const requests = []
+  await page.route(endpoint, route => {
+    requests.push(route.request().postDataJSON())
+    if (requests.length === 1) {
+      return route.fulfill({ status: 503, json: { detail: 'all providers unavailable' } })
+    }
+    return route.fulfill({ json: { reply: 'Ready now.', metadata } })
+  })
+  await page.goto('/')
+  await page.getByTestId('chat-input').fill('Retry this prompt')
+  await page.getByTestId('send-button').click()
+  await expect(page.getByRole('alert')).toBeVisible()
+  await capture(page, 'lyftr-error.png')
+  await page.getByRole('button', { name: 'Retry', exact: true }).click()
+  await expect(page.getByText('Ready now.')).toBeVisible()
+  await expect(page.getByText('Retry this prompt', { exact: true }).and(page.locator('.user'))).toHaveCount(1)
+  expect(requests).toEqual([requests[0], requests[0]])
+})
 
 test('renders assistant Markdown safely and leaves user text literal', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 650 })
@@ -47,7 +155,7 @@ test('renders assistant Markdown safely and leaves user text literal', async ({ 
   await page.getByTestId('chat-input').fill('**Keep this literal**')
   await page.getByTestId('send-button').click()
 
-  await expect(page.getByText('**Keep this literal**', { exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Conversation' }).getByText('**Keep this literal**', { exact: true })).toBeVisible()
   const reply = page.getByTestId('assistant-message')
   await expect(reply.getByRole('heading', { level: 3 })).toHaveText('What does REST mean?')
   await expect(reply.locator('p strong')).toHaveText('REST')
@@ -89,6 +197,7 @@ test('submits once, clears the composer and renders the reply metadata', async (
   try {
     await expect(input).toHaveValue('')
     await expect(page.getByRole('status')).toHaveText('Waiting for a reply…')
+    await capture(page, 'lyftr-loading.png')
     await input.fill('Second message')
     await expect(page.getByTestId('send-button')).toBeDisabled()
     await input.press('Enter')

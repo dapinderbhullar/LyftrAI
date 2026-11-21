@@ -2,6 +2,10 @@
 
 A multi-turn chatbot with React, FastAPI, LiteLLM, the Gemini Developer API, and SQLite. Each reply includes its resolution source, model, latency, and token usage.
 
+React sends the current message and a session ID to FastAPI. The backend loads the session history from SQLite and checks the LiteLLM cache. A cache miss goes to Gemini through the configured key pool. After a successful reply, the backend stores the user and assistant messages together. The UI renders assistant Markdown with raw HTML disabled.
+
+The chat workspace includes prompt suggestions, persistent light and dark themes, copy controls for replies and code, and a New Chat action that starts a separate session. A provider-unavailable response offers a retry when the API confirms the request failed before saving a reply.
+
 ## Live URLs
 
 | Deliverable | URL |
@@ -10,7 +14,7 @@ A multi-turn chatbot with React, FastAPI, LiteLLM, the Gemini Developer API, and
 | Render backend | [lyftrai-backend.onrender.com](https://lyftrai-backend.onrender.com) |
 | Vercel frontend | [lyftr-ai-dusky.vercel.app](https://lyftr-ai-dusky.vercel.app/) |
 
-The public API previously passed health and CORS checks. The Gemini migration and voice demo still need live verification.
+Production health, CORS, Gemini inference, caching, multi-turn history, and key failover have been verified. The voice demo is pending.
 
 For a Render Docker service, leave **Root Directory** and **Docker Command** blank, set **Dockerfile Path** to `backend/Dockerfile`, and set **Docker Build Context Directory** to `backend`. Use one worker and `/health` as the health probe. Render provides `PORT`.
 
@@ -107,12 +111,34 @@ curl -si "$BASE/sessions/demo-failed/messages"
 
 Expect live inference followed by an identical cached reply with a null key ID and the same token counts. The follow-up should use `key_2` with one fallback attempt and recall Ada. The final commands should return 503 and 404 respectively. In the UI, send a message and reload the page before repeating it to compare source, latency and per-message token usage across sessions.
 
+Illustrative response bodies for health, chat, and history:
+
+```json
+{"status":"ok","keys_configured":2,"cache_enabled":true}
+```
+
+```json
+{"session_id":"demo-live","reply":"Got it. Your dog is named Ada.","metadata":{"resolution_source":"LIVE_INFERENCE","model":"gemini/gemini-3.5-flash-lite","latency_ms":655,"input_tokens":20,"output_tokens":11,"key_id":"key_1","fallback_attempts":0}}
+```
+
+```json
+{"session_id":"demo-live","messages":[{"role":"user","content":"I have a dog named Ada."},{"role":"assistant","content":"Got it. Your dog is named Ada.","metadata":{"resolution_source":"LIVE_INFERENCE","model":"gemini/gemini-3.5-flash-lite","latency_ms":655,"input_tokens":20,"output_tokens":11,"key_id":"key_1","fallback_attempts":0}}]}
+```
+
 Run backend tests from `backend/` with `python -m pip install -r requirements.txt pytest httpx` and `python -m pytest -q`. The tests replace the provider call while using real SQLite and LiteLLM's cache.
 
 From `frontend/`, run `npm ci`, `npx playwright install chromium` and `npx playwright test` for the browser suite. To use installed Edge, set `PLAYWRIGHT_BROWSER_CHANNEL=msedge` before running the suite. `npm run build` verifies the production bundle.
 
-GitHub Actions built both services and verified SQLite history after a Compose teardown and restart. [Docker workflow run](https://github.com/dapinderbhullar/LyftrAI/actions/runs/44815957530).
+The release checks passed 40 backend tests, 7 Playwright tests, and the frontend production build. GitHub Actions ran `make up`, checked the frontend and backend ports, and retrieved a seeded SQLite message after `make down` and `make up` on commit `047ecfc`. CI uses placeholder keys. A real Gemini request from the Windows Docker stack still needs verification. [Docker workflow run](https://github.com/dapinderbhullar/LyftrAI/actions/runs/44885523044).
 
 See the [requirements audit](docs/audit.md) for verified behavior and deployment checks, and the [timed voice demo script](docs/demo.md) for exact recording commands.
+
+## Setup Used: your editor and AI tools
+
+Development tools included PowerShell and Codex.
+
+## Bonus features (if any): what you added beyond the requirements and why
+
+The API accepts a session-level system prompt. The interface also lets users restore a failed prompt to the composer or retry an explicit provider-unavailable response without adding a duplicate turn.
 
 
