@@ -101,10 +101,4 @@ GitHub Actions built both services and verified SQLite history after a Compose t
 
 See the [requirements audit](docs/audit.md) for verified behavior and deployment checks, and the [timed voice demo script](docs/demo.md) for exact recording commands.
 
-## Setup Used: your editor and AI tools
 
-Development tools included PowerShell and Codex.
-
-## Bonus features (if any): what you added beyond the requirements and why
-
-The API accepts a session-level system prompt. After a failed request, users can restore their message to the composer.
