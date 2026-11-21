@@ -131,5 +131,7 @@ From `frontend/`, run `npm ci`, `npx playwright install chromium` and `npx playw
 
 The release checks passed 40 backend tests, 7 Playwright tests, and the frontend production build. GitHub Actions ran `make up`, checked the frontend and backend ports, and retrieved a seeded SQLite message after `make down` and `make up` on commit `047ecfc`. CI uses placeholder keys. A real Gemini request from the Windows Docker stack still needs verification. [Docker workflow run](https://github.com/dapinderbhullar/LyftrAI/actions/runs/44885523044).
 
+...
+
 
 
