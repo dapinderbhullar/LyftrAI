@@ -1,3 +1,4 @@
+import json
 import socket
 from contextlib import closing
 from threading import Event, Thread
@@ -10,6 +11,7 @@ import uvicorn
 from fastapi.testclient import TestClient
 
 from app import app, litellm
+from provider_errors import diagnose
 
 
 @pytest.fixture
@@ -75,18 +77,106 @@ def test_simulated_failover(client, provider, status):
     assert send(client, "normal", "Uncached").json()["metadata"]["key_id"] == "key_1"
 
 
-def test_provider_exception(client, provider):
+def test_provider_exception(client, provider, monkeypatch):
+    sleep = Mock()
+    monkeypatch.setattr("app.sleep", sleep)
     complete = provider.side_effect
 
     def rate_limited(**kwargs):
         if kwargs["api_key"] == "fake-one":
-            raise litellm.RateLimitError(message="rate limited", model="test", llm_provider="openai")
+            raise rate_limit_error("rate_limit_exceeded", "RPM limit", {"Retry-After": "1"})
         return complete(**kwargs)
 
     provider.side_effect = rate_limited
     result = send(client, "fallback").json()["metadata"]
     assert result["key_id"] == "key_2"
     assert result["fallback_attempts"] == 1
+    sleep.assert_not_called()
+
+
+def rate_limit_error(code, message, headers=None):
+    upstream = httpx.Response(
+        429, request=httpx.Request("POST", "https://example.test"),
+        json={"error": {"code": code, "type": code, "message": message}},
+        headers=headers,
+    )
+    return litellm.RateLimitError(message, "openai", "test", response=upstream)
+
+
+@pytest.mark.parametrize(("code", "message", "expected"), [
+    ("rate_limit_exceeded", "Rate limit reached on tokens per minute", "temporary_rate_limit"),
+    ("insufficient_quota", "Check your plan and billing details", "insufficient_quota"),
+    ("quota_exceeded", "RPM limit also applies", "insufficient_quota"),
+    ("billing_hard_limit_reached", "Billing hard limit reached", "spending_limit"),
+    ("budget_exceeded", "Project budget exceeded", "spending_limit"),
+    ("model_not_found", "The requested model does not exist", "model_access"),
+    (None, "Too many requests", "unclassified_rate_limit"),
+])
+def test_provider_error_classification(code, message, expected):
+    diagnostic, _ = diagnose(rate_limit_error(code, message), "openai/test", [])
+    assert diagnostic["classification"] == expected
+    assert diagnostic["http_status"] == 429
+
+
+def test_provider_logs_only_safe_diagnostics(client, provider, caplog, monkeypatch):
+    sleep = Mock()
+    monkeypatch.setattr("app.sleep", sleep)
+    provider.side_effect = rate_limit_error("insufficient_quota", "fake-one private prompt", {
+        "Retry-After": "1",
+        "X-RateLimit-Remaining-Requests": "0",
+        "X-RateLimit-Reset-Tokens": "1m2.5s",
+        "X-Request-Id": "req_example123",
+        "Authorization": "Bearer fake-two",
+        "Set-Cookie": "private cookie",
+        "X-RateLimit-Remaining-Tokens": "private prompt",
+    })
+    response = send(client, "diagnostics", "private prompt")
+    assert response.status_code == 503
+    assert provider.call_count == 2
+    sleep.assert_not_called()
+    assert all(value not in caplog.text for value in (
+        "fake-one", "fake-two", "private prompt", "private cookie", "Authorization",
+    ))
+    warning = next(record.message for record in caplog.records if record.message.startswith("Provider key_1 failed "))
+    diagnostic = json.loads(warning.removeprefix("Provider key_1 failed "))
+    assert diagnostic == {
+        "exception": "RateLimitError", "http_status": 429, "provider": "openai",
+        "classification": "insufficient_quota", "error_code": "insufficient_quota",
+        "error_type": "insufficient_quota", "retry_after": "1", "request_id": "req_example123",
+        "provider_message_summary": "Provider indicated insufficient quota or exhausted credits.",
+        "rate_limit_headers": {
+            "x-ratelimit-remaining-requests": "0", "x-ratelimit-reset-tokens": "1m2.5s",
+        },
+    }
+
+
+def test_provider_does_not_log_prompt_disguised_as_request_id(client, provider, caplog):
+    prompt = "req_private123"
+    provider.side_effect = rate_limit_error("insufficient_quota", prompt, {"X-Request-Id": prompt})
+    assert send(client, "echoed-header", prompt).status_code == 503
+    assert prompt not in caplog.text
+
+
+@pytest.mark.parametrize(("retry_after", "retry_expected"), [("1", True), ("12", False)])
+def test_transient_retry_only_after_failover(client, provider, monkeypatch, retry_after, retry_expected):
+    sleep = Mock()
+    monkeypatch.setattr("app.sleep", sleep)
+    monkeypatch.setattr("provider_errors.uniform", lambda low, high: 0.1)
+    complete = provider.side_effect
+    temporary = rate_limit_error("rate_limit_exceeded", "RPM limit", {"Retry-After": retry_after})
+    quota = rate_limit_error("insufficient_quota", "Insufficient quota")
+    provider.side_effect = [temporary, quota, complete(messages=[{"content": "Hello"}])]
+    response = send(client, "retry")
+    attempted_keys = [call.kwargs["api_key"] for call in provider.call_args_list]
+    if retry_expected:
+        assert attempted_keys == ["fake-one", "fake-two", "fake-one"]
+        sleep.assert_called_once_with(1.1)
+        assert response.status_code == 200
+        assert response.json()["metadata"]["key_id"] == "key_1"
+    else:
+        assert attempted_keys == ["fake-one", "fake-two"]
+        sleep.assert_not_called()
+        assert response.status_code == 503
 
 
 def test_total_failure_and_invalid_input(client, provider):

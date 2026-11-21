@@ -12,10 +12,10 @@
 | Cache versus inference latency | Implemented but not verified | Latency is measured on both paths. A real-provider comparison is pending. |
 | Two-key failover and test hook | Partially implemented | Mocked provider exception and TCP header tests passed, including cache bypass, disabled configuration, request scope, 429/5xx simulation, and no writes on failure. Real-key inference and fallback remain pending. |
 | Request-local token metadata | Partially implemented | Tests verify prompt and completion counts from the provider response and cache. Actual provider-reported counts remain pending. |
-| CORS and build-time API URL | Partially implemented | Local preflight tests verify allowed and denied origins. Public origin configuration remains pending. |
+| CORS and build-time API URL | Fully implemented and verified | The Vercel bundle targets Render. Production preflight accepted the Vercel origin. |
 | Multi-stage images and Make targets | Fully implemented and verified | The Linux GitHub runner built both images and ran make up and make down. [Docker workflow run](https://github.com/dapinderbhullar/LyftrAI/actions/runs/44811950958). |
 | Environment and secret hygiene | Fully implemented and verified | Placeholder sample configuration, secret ignore rules and server-only key handling. |
-| Public hosting | Partially implemented | Render Free backend URL supplied. The frontend still needs deployment and the live flow needs verification. Render Free storage is ephemeral. See the Oracle Cloud migration plan for an Always Free option. |
+| Public hosting | Partially implemented | The public Vercel frontend and Render API are reachable. Provider inference still returns 503. Render Free storage is ephemeral. |
 | Public GitHub repository | Fully implemented and verified | Pushed to main and confirmed public access through the GitHub API. |
 | README and demo walkthrough | Fully implemented and verified | Setup, API, test and deployment documentation plus a timed demo walkthrough are in the repo. |
-| Public voice demo and submission | Missing | Requires public deployment and voice recording. |
+| Public voice demo and submission | Missing | Requires working provider inference and a recording. |

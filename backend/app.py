@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager, closing
 from datetime import datetime, timezone
 from hashlib import sha256
 from threading import Lock
-from time import perf_counter
+from time import perf_counter, sleep
 from typing import Annotated
 
 import litellm
@@ -16,7 +16,10 @@ from fastapi.responses import JSONResponse
 from litellm.caching import Cache
 from pydantic import BaseModel, StringConstraints
 
+from provider_errors import diagnose, retry_delay
+
 logger = logging.getLogger(__name__)
+litellm.suppress_debug_info = True
 DEFAULT_PROMPT = "You are a helpful assistant."
 SESSION_LOCKS = [Lock() for _ in range(64)]
 
@@ -134,10 +137,7 @@ def infer(messages, failures):
         if cached is not None:
             return cached, "LLM_CACHE", None, 0
 
-    for index, key in enumerate(state.keys, start=1):
-        key_id = f"key_{index}"
-        if "*" in failures or key_id in failures:
-            continue
+    def attempt(key, key_id):
         try:
             response = litellm.completion(
                 **provider_args, api_key=key, caching=False, num_retries=0, timeout=15
@@ -149,17 +149,38 @@ def infer(messages, failures):
                 or usage.prompt_tokens is None or usage.completion_tokens is None
             ):
                 logger.warning("Provider %s returned an incomplete response", key_id)
-                continue
+                return None, None
             result = {
                 "reply": reply,
                 "input_tokens": usage.prompt_tokens,
                 "output_tokens": usage.completion_tokens,
             }
         except Exception as exc:
-            logger.warning("Provider %s failed (%s)", key_id, type(exc).__name__)
-            continue
+            protected = (*state.keys, *(message["content"] for message in messages))
+            diagnostic, retry_after = diagnose(exc, state.model, protected)
+            logger.warning("Provider %s failed %s", key_id, json.dumps(diagnostic))
+            delay = retry_delay(retry_after) if diagnostic["classification"] == "temporary_rate_limit" else None
+            return None, delay
         state.cache.add_cache(json.dumps(result), cache_key=cache_key)
-        return result, "LIVE_INFERENCE", key_id, index - 1
+        return result, None
+
+    retry = None
+    for index, key in enumerate(state.keys, start=1):
+        key_id = f"key_{index}"
+        if "*" in failures or key_id in failures:
+            continue
+        result, delay = attempt(key, key_id)
+        if result is not None:
+            return result, "LIVE_INFERENCE", key_id, index - 1
+        if retry is None and delay is not None and not failures:
+            retry = (key, key_id, delay)
+
+    if retry is not None:
+        key, key_id, delay = retry
+        sleep(delay)
+        result, _ = attempt(key, key_id)
+        if result is not None:
+            return result, "LIVE_INFERENCE", key_id, len(state.keys) - 1
     raise HTTPException(503, "all providers unavailable")
 
 

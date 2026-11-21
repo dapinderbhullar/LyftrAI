@@ -37,6 +37,6 @@ $failed = Invoke-WebRequest "$api/sessions/failed-$tag/messages" -SkipHttpErrorC
 $failed.Content
 ```
 
-- **2:15–2:40** — Explain that React sends the latest message, FastAPI fetches the SQLite conversation, and LiteLLM caches responses by model and conversation. Explain that the backend attempts the keys in order and stores history on a persistent disk.
+- **2:15–2:40** — Explain that React sends the latest message, FastAPI loads the conversation from SQLite, and LiteLLM caches replies by model and conversation. The backend tries keys in order. Render Free can lose history on restart, while local Compose uses a named volume.
 
 Export the recording, upload it with public link access, and test the link in a private browser window. Add the verified link to the README and include it with the two public service URLs and GitHub URL in the assignment submission.

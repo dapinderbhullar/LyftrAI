@@ -10,9 +10,9 @@ A multi-turn chatbot with React, FastAPI, LiteLLM and SQLite. The browser sends 
 | Render backend | [lyftrai-backend.onrender.com](https://lyftrai-backend.onrender.com) |
 | Vercel frontend | [lyftr-ai-dusky.vercel.app](https://lyftr-ai-dusky.vercel.app/) |
 
-The frontend is public. Live backend verification and the voice recording are pending.
+The public API passes health and CORS checks. Live chat currently returns a provider error. The voice demo is pending.
 
-On the existing Render backend, use Docker with `backend/` as the root directory, one worker, and `/health` as the health probe. Under **Environment**, set `LLM_API_KEYS` to two working keys for the configured `LLM_MODEL`, `DATABASE_URL=sqlite:////data/app.db`, and `ENABLE_FAILURE_SIMULATION=true`. Render sets `PORT` for its web service. Keep the keys in Render only.
+For a Render Docker service, leave **Root Directory** and **Docker Command** blank, set **Dockerfile Path** to `backend/Dockerfile`, and set **Docker Build Context Directory** to `backend`. Use one worker and `/health` as the health probe. Set `LLM_API_KEYS` to two working keys for `LLM_MODEL`, `DATABASE_URL` to `sqlite:////data/app.db`, and `ENABLE_FAILURE_SIMULATION` to `true`. Keep the keys in Render's environment settings. Render provides `PORT`.
 
 For the frontend, import this repository into Vercel on Hobby, select Vite and set the root directory to `frontend`. Set the production variable `VITE_API_URL=https://lyftrai-backend.onrender.com` before deploying. The build command is `npm run build` and output directory is `dist`. Once the frontend URL is assigned, set Render's `ALLOWED_ORIGINS` to that exact HTTPS origin and redeploy the backend. Render Static Sites can use the same Vite settings. The [Render Blueprint](render.yaml) describes a new pair of free Render services.
 
@@ -55,7 +55,9 @@ Vite uses `http://localhost:8000` by default. Set `VITE_API_URL` in the frontend
 
 ## Design decisions: key fallback, caching, SQLite session storage
 
-The backend attempts each key in order through LiteLLM with provider retries disabled. Provider exceptions and incomplete responses advance to the next key. The simulation header skips the specified keys before any provider call and bypasses cache lookup for that request. Exhausting the pool returns a JSON 503.
+The backend tries keys in order through LiteLLM. A provider error or incomplete reply advances to the next key. After both keys fail, a confirmed temporary throttle can receive one retry, with jitter and a delay of at most two seconds. The backend skips that retry if the provider's `Retry-After` requires a longer wait. Billing and quota errors receive no extra retry. The simulation header skips the specified keys and bypasses cache lookup. If no attempt succeeds, the API returns a JSON 503.
+
+Provider failures emit a structured warning with the exception class, status, and a sanitized classification. Recognized provider codes, retry headers, and request IDs are included when available.
 
 LiteLLM's built-in in-memory cache stores reply text and per-call usage for one hour. The key includes the LiteLLM model and complete ordered provider conversation. Session IDs and credentials stay out of the key. The cache resets on backend restart.
 
@@ -95,14 +97,14 @@ Run backend tests from `backend/` with `python -m pip install -r requirements.tx
 
 From `frontend/`, run `npm ci`, `npx playwright install chromium` and `npx playwright test` for the browser suite. To use installed Edge, set `PLAYWRIGHT_BROWSER_CHANNEL=msedge` before running the suite. `npm run build` verifies the production bundle.
 
-Verification passed for 16 backend tests, 3 Edge browser tests, and the production bundle. GitHub Actions built and started both Docker services and verified SQLite history after a Compose teardown and restart. Provider-backed inference and the public deployment are pending. [Docker workflow run](https://github.com/dapinderbhullar/LyftrAI/actions/runs/44811950958).
+GitHub Actions built both services and verified SQLite history after a Compose teardown and restart. [Docker workflow run](https://github.com/dapinderbhullar/LyftrAI/actions/runs/44815957530).
 
 See the [requirements audit](docs/audit.md) for verified behavior and deployment checks, and the [timed voice demo script](docs/demo.md) for exact recording commands.
 
 ## Setup Used: your editor and AI tools
 
-Codex desktop and PowerShell were used to implement the project.
+Development tools included PowerShell and Codex.
 
 ## Bonus features (if any): what you added beyond the requirements and why
 
-The API supports a session-level system prompt so callers can customize assistant behavior. The UI provides example prompts and lets users restore a failed message to the composer.
+The API accepts a session-level system prompt. After a failed request, users can restore their message to the composer.
