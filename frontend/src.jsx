@@ -1,14 +1,24 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
+import Markdown from 'react-markdown'
+import remarkBreaks from 'remark-breaks'
+import remarkGfm from 'remark-gfm'
 import './style.css'
 
 const api = (import.meta.env.VITE_API_URL || 'http://localhost:8000').replace(/\/$/, '')
 const examples = ['Explain how a rainbow forms', 'Help me plan a weekend trip', 'Give me a quick writing exercise']
+const markdownComponents = {
+  table: ({ node: _node, ...props }) => <div className="reply-table"><table {...props} /></div>,
+}
 
 function Reply({ text, metadata }) {
   return <article className="reply" data-testid="assistant-message">
     <strong>Assistant</strong>
-    <p>{text}</p>
+    <div className="reply-text">
+      <Markdown remarkPlugins={[remarkGfm, remarkBreaks]} components={markdownComponents} skipHtml disallowedElements={['img']}>
+        {text}
+      </Markdown>
+    </div>
     <dl>
       <div><dt>Source</dt><dd data-testid="meta-source">{metadata.resolution_source}</dd></div>
       <div><dt>Model</dt><dd data-testid="meta-model">{metadata.model}</dd></div>

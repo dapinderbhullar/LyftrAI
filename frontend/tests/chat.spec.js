@@ -9,6 +9,67 @@ const metadata = {
   output_tokens: 7,
 }
 
+test('renders assistant Markdown safely and leaves user text literal', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 650 })
+  const longCode = 'x'.repeat(200)
+  const columns = Array.from({ length: 24 }, (_, index) => String(index + 1))
+  const markdown = [
+    '### What does REST mean?',
+    '',
+    '**REST** is an *architectural style*. Use `GET` to read.',
+    'This starts on a new line.',
+    '',
+    '- One bullet',
+    '- Another bullet',
+    '',
+    '1. First step',
+    '2. Second step',
+    '',
+    '```text',
+    longCode,
+    '```',
+    '',
+    `| Method | Purpose | ${columns.join(' | ')} |`,
+    `| --- | --- | ${columns.map(() => '---').join(' | ')} |`,
+    `| GET | Read | ${columns.join(' | ')} |`,
+    '',
+    '[Documentation](https://example.com/docs)',
+    '',
+    '[Unsafe link](javascript:alert%281%29)',
+    '',
+    '<img src="https://example.com/raw.png" onerror="alert(1)">',
+    '',
+    '![Remote image](https://example.com/image.png)',
+  ].join('\n')
+
+  await page.route(endpoint, route => route.fulfill({ json: { reply: markdown, metadata } }))
+  await page.goto('/')
+  await page.getByTestId('chat-input').fill('**Keep this literal**')
+  await page.getByTestId('send-button').click()
+
+  await expect(page.getByText('**Keep this literal**', { exact: true })).toBeVisible()
+  const reply = page.getByTestId('assistant-message')
+  await expect(reply.getByRole('heading', { level: 3 })).toHaveText('What does REST mean?')
+  await expect(reply.locator('p strong')).toHaveText('REST')
+  await expect(reply.locator('em')).toHaveText('architectural style')
+  await expect(reply.locator('p br')).toHaveCount(1)
+  await expect(reply.locator('p code')).toHaveText('GET')
+  await expect(reply.locator('ul li')).toHaveText(['One bullet', 'Another bullet'])
+  await expect(reply.locator('ol li')).toHaveText(['First step', 'Second step'])
+  await expect(reply.locator('pre code')).toHaveText(longCode)
+  await expect(reply.getByRole('columnheader', { name: 'Method' })).toBeVisible()
+  await expect(reply.getByRole('link', { name: 'Documentation' })).toHaveAttribute('href', 'https://example.com/docs')
+  await expect(reply.locator('a[href^="javascript:"]')).toHaveCount(0)
+  await expect(reply.locator('img')).toHaveCount(0)
+  for (const selector of ['pre', '.reply-table']) {
+    expect(await reply.locator(selector).evaluate(element => {
+      element.scrollLeft = element.scrollWidth
+      return element.scrollLeft
+    })).toBeGreaterThan(0)
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390)
+})
+
 test('submits once, clears the composer and renders the reply metadata', async ({ page }) => {
   let finish
   const waiting = new Promise(resolve => { finish = resolve })
