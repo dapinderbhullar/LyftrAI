@@ -131,14 +131,5 @@ From `frontend/`, run `npm ci`, `npx playwright install chromium` and `npx playw
 
 The release checks passed 40 backend tests, 7 Playwright tests, and the frontend production build. GitHub Actions ran `make up`, checked the frontend and backend ports, and retrieved a seeded SQLite message after `make down` and `make up` on commit `047ecfc`. CI uses placeholder keys. A real Gemini request from the Windows Docker stack still needs verification. [Docker workflow run](https://github.com/dapinderbhullar/LyftrAI/actions/runs/44885523044).
 
-See the [requirements audit](docs/audit.md) for verified behavior and deployment checks, and the [timed voice demo script](docs/demo.md) for exact recording commands.
-
-## Setup Used: your editor and AI tools
-
-Development tools included PowerShell and Codex.
-
-## Bonus features (if any): what you added beyond the requirements and why
-
-The API accepts a session-level system prompt. The interface also lets users restore a failed prompt to the composer or retry an explicit provider-unavailable response without adding a duplicate turn.
 
 
