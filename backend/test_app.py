@@ -10,14 +10,15 @@ import pytest
 import uvicorn
 from fastapi.testclient import TestClient
 
-from app import app, litellm
+from app import DEFAULT_MODEL, app, litellm
 from provider_errors import diagnose
 
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
+    monkeypatch.delenv("LLM_MODEL", raising=False)
     monkeypatch.setenv("DATABASE_URL", "sqlite:///" + (tmp_path / "test.db").as_posix())
-    monkeypatch.setenv("LLM_API_KEYS", "fake-one,fake-two")
+    monkeypatch.setenv("GEMINI_API_KEYS", "fake-one,fake-two")
     monkeypatch.setenv("ENABLE_FAILURE_SIMULATION", "true")
     with TestClient(app) as client:
         yield client
@@ -39,6 +40,51 @@ def provider(monkeypatch):
 def send(client, session, text="Hello", failure=None, **options):
     headers = {"X-Simulate-Failure": failure} if failure else {}
     return client.post("/chat", json={"session_id": session, "message": text, **options}, headers=headers)
+
+
+@pytest.mark.parametrize("fail_first_key", [False, True])
+def test_gemini_adapter_sends_configured_key_and_maps_usage(client, monkeypatch, caplog, fail_first_key):
+    keys = []
+
+    def send_to_google(_client, request, **kwargs):
+        assert request.url.host == "generativelanguage.googleapis.com"
+        assert request.url.path.endswith("/models/gemini-3.5-flash-lite:generateContent")
+        key = request.headers["x-goog-api-key"]
+        keys.append(key)
+        body = json.loads(request.content)
+        assert body["contents"][-1]["parts"][0]["text"] == "Hello"
+        if fail_first_key and key == "fake-one":
+            return httpx.Response(429, request=request, json={"error": {
+                "code": 429, "status": "RESOURCE_EXHAUSTED", "message": "Quota exceeded.",
+                "details": [{"@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                             "violations": [{"quotaId": "GenerateRequestsPerDay"}]}],
+            }})
+        return httpx.Response(200, request=request, json={
+            "candidates": [{"content": {"role": "model", "parts": [{"text": "Hello back"}]},
+                            "finishReason": "STOP"}],
+            "usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 2, "totalTokenCount": 7},
+        })
+
+    monkeypatch.setattr(httpx.Client, "send", send_to_google)
+    response = send(client, "gemini-transport")
+    assert response.status_code == 200
+    assert response.json()["reply"] == "Hello back"
+    metadata = response.json()["metadata"]
+    assert metadata["model"] == DEFAULT_MODEL
+    assert metadata["key_id"] == ("key_2" if fail_first_key else "key_1")
+    assert metadata["fallback_attempts"] == int(fail_first_key)
+    assert keys == (["fake-one", "fake-two"] if fail_first_key else ["fake-one"])
+    if fail_first_key:
+        assert '"classification": "insufficient_quota"' in caplog.text
+        assert "fake-one" not in caplog.text and "fake-two" not in caplog.text
+    assert (metadata["input_tokens"], metadata["output_tokens"]) == (5, 2)
+
+
+def test_rejects_non_gemini_model(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "other/model")
+    with pytest.raises(ValueError, match="gemini/ model identifier"):
+        with TestClient(app):
+            pytest.fail("Unexpected startup")
 
 
 def test_cache_and_history(client, provider):
@@ -100,7 +146,7 @@ def rate_limit_error(code, message, headers=None):
         json={"error": {"code": code, "type": code, "message": message}},
         headers=headers,
     )
-    return litellm.RateLimitError(message, "openai", "test", response=upstream)
+    return litellm.RateLimitError(message, "gemini", "test", response=upstream)
 
 
 @pytest.mark.parametrize(("code", "message", "expected"), [
@@ -113,9 +159,44 @@ def rate_limit_error(code, message, headers=None):
     (None, "Too many requests", "unclassified_rate_limit"),
 ])
 def test_provider_error_classification(code, message, expected):
-    diagnostic, _ = diagnose(rate_limit_error(code, message), "openai/test", [])
+    diagnostic, _ = diagnose(rate_limit_error(code, message), "gemini/test", [])
     assert diagnostic["classification"] == expected
     assert diagnostic["http_status"] == 429
+
+
+@pytest.mark.parametrize(("status", "error_status", "detail", "expected", "delay"), [
+    (429, "RESOURCE_EXHAUSTED", {"@type": "type.googleapis.com/google.rpc.QuotaFailure",
+        "violations": [{"quotaId": "GenerateRequestsPerMinutePerProjectPerModel-FreeTier"}]},
+        "temporary_rate_limit", 1.25),
+    (429, "RESOURCE_EXHAUSTED", {"@type": "type.googleapis.com/google.rpc.QuotaFailure",
+        "violations": [{"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier"}]},
+        "insufficient_quota", 1.25),
+    (429, "RESOURCE_EXHAUSTED", {"@type": "type.googleapis.com/google.rpc.QuotaFailure",
+        "violations": [{"quotaId": "GenerateRequestsPerMinute", "quotaValue": "0"}]},
+        "insufficient_quota", 1.25),
+    (429, "RESOURCE_EXHAUSTED", {}, "unclassified_rate_limit", None),
+    (400, "FAILED_PRECONDITION", {"@type": "type.googleapis.com/google.rpc.ErrorInfo",
+        "reason": "BILLING_DISABLED"}, "spending_limit", None),
+    (400, "INVALID_ARGUMENT", {"@type": "type.googleapis.com/google.rpc.ErrorInfo",
+        "reason": "API_KEY_INVALID"}, "invalid_key", None),
+    (401, "UNAUTHENTICATED", {}, "authentication", None),
+    (404, "NOT_FOUND", {}, "model_access", None),
+    (503, "UNAVAILABLE", {}, "server_error", None),
+    (400, "INVALID_ARGUMENT", {}, "other", None),
+])
+def test_google_rpc_error_details(status, error_status, detail, expected, delay):
+    details = [detail]
+    if delay is not None:
+        details.append({"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "1.25s"})
+    response = httpx.Response(status, json={"error": {
+        "code": status, "status": error_status, "details": details,
+    }})
+    diagnostic, retry_after = diagnose(SimpleNamespace(response=response), DEFAULT_MODEL, [])
+    assert diagnostic["classification"] == expected
+    assert diagnostic["http_status"] == status
+    assert diagnostic["error_code"] == str(status)
+    assert diagnostic["error_type"] == error_status
+    assert retry_after == delay
 
 
 def test_provider_logs_only_safe_diagnostics(client, provider, caplog, monkeypatch):
@@ -140,7 +221,7 @@ def test_provider_logs_only_safe_diagnostics(client, provider, caplog, monkeypat
     warning = next(record.message for record in caplog.records if record.message.startswith("Provider key_1 failed "))
     diagnostic = json.loads(warning.removeprefix("Provider key_1 failed "))
     assert diagnostic == {
-        "exception": "RateLimitError", "http_status": 429, "provider": "openai",
+        "exception": "RateLimitError", "http_status": 429, "provider": "gemini",
         "classification": "insufficient_quota", "error_code": "insufficient_quota",
         "error_type": "insufficient_quota", "retry_after": "1", "request_id": "req_example123",
         "provider_message_summary": "Provider indicated insufficient quota or exhausted credits.",
@@ -225,7 +306,7 @@ def test_distinct_histories_do_not_share_context_or_cache(client, provider):
 def test_persistence_after_new_lifespan(tmp_path, monkeypatch, provider):
     path = tmp_path / "persistent.db"
     monkeypatch.setenv("DATABASE_URL", "sqlite:///" + path.as_posix())
-    monkeypatch.setenv("LLM_API_KEYS", "fake-one,fake-two")
+    monkeypatch.setenv("GEMINI_API_KEYS", "fake-one,fake-two")
     with TestClient(app) as first:
         response = send(first, "saved", system_prompt="Private system prompt")
         assert response.status_code == 200
@@ -239,7 +320,7 @@ def test_persistence_after_new_lifespan(tmp_path, monkeypatch, provider):
 
 def test_simulation_disabled(tmp_path, monkeypatch, provider):
     monkeypatch.setenv("DATABASE_URL", "sqlite:///" + (tmp_path / "disabled.db").as_posix())
-    monkeypatch.setenv("LLM_API_KEYS", "fake-one,fake-two")
+    monkeypatch.setenv("GEMINI_API_KEYS", "fake-one,fake-two")
     monkeypatch.setenv("ENABLE_FAILURE_SIMULATION", "false")
     with TestClient(app) as client:
         result = send(client, "ignored", failure="*=429")
@@ -249,7 +330,7 @@ def test_simulation_disabled(tmp_path, monkeypatch, provider):
 
 def test_health_requires_two_keys(tmp_path, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "sqlite:///" + (tmp_path / "single.db").as_posix())
-    monkeypatch.setenv("LLM_API_KEYS", "one-key")
+    monkeypatch.setenv("GEMINI_API_KEYS", "one-key")
     with TestClient(app) as client:
         assert client.get("/health").status_code == 503
 
@@ -270,7 +351,7 @@ def test_cors(client):
 
 def test_endpoints_over_tcp(tmp_path, monkeypatch, provider):
     monkeypatch.setenv("DATABASE_URL", "sqlite:///" + (tmp_path / "http.db").as_posix())
-    monkeypatch.setenv("LLM_API_KEYS", "fake-one,fake-two")
+    monkeypatch.setenv("GEMINI_API_KEYS", "fake-one,fake-two")
     monkeypatch.setenv("ENABLE_FAILURE_SIMULATION", "true")
     ready = Event()
 

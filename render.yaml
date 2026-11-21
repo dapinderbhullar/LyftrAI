@@ -12,8 +12,8 @@ services:
       - key: ENABLE_FAILURE_SIMULATION
         value: "true"
       - key: LLM_MODEL
-        value: openai/gpt-4o-mini
-      - key: LLM_API_KEYS
+        value: gemini/gemini-3.5-flash-lite
+      - key: GEMINI_API_KEYS
         sync: false
       - key: ALLOWED_ORIGINS
         sync: false

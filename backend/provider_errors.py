@@ -23,6 +23,10 @@ ERROR_TAGS = {
     "invalid_api_key", "authentication_error", "permission_denied", "invalid_request_error",
     "server_error", "service_unavailable", "overloaded_error", "invalid_argument",
     "not_found", "vendor_rate_limit", "litellm_rate_limit",
+    "api_key_invalid", "api_key_expired", "api_key_service_blocked",
+    "api_key_http_referrer_blocked", "api_key_ip_address_blocked",
+    "unauthenticated", "failed_precondition", "billing_disabled",
+    "free_tier_unavailable", "internal", "unavailable", "deadline_exceeded",
 }
 SUMMARY = {
     "spending_limit": "Provider indicated a billing, budget, or spending limit.",
@@ -30,6 +34,8 @@ SUMMARY = {
     "model_access": "Provider indicated an unavailable model or restricted model access.",
     "temporary_rate_limit": "Provider indicated temporary request or token throttling.",
     "authentication": "Provider reported an authentication failure.",
+    "invalid_key": "Provider reported an invalid or expired API key.",
+    "server_error": "Provider reported an upstream server error.",
     "unclassified_rate_limit": "Provider returned a rate-limit error without a clear cause.",
     "other": "Provider detail withheld because it may contain request data.",
 }
@@ -54,12 +60,34 @@ def diagnose(exc, model, protected_values):
 
     code = error.get("code") or getattr(exc, "code", None)
     error_type = error.get("type") or error.get("status") or getattr(exc, "type", None)
-    status = getattr(response, "status_code", None) or getattr(exc, "status_code", None)
+    status = error.get("code") if isinstance(error.get("code"), int) else None
+    status = status or getattr(response, "status_code", None) or getattr(exc, "status_code", None)
     status = status if isinstance(status, int) and 100 <= status <= 599 else None
+    reasons, quota, retry_info = [], [], None
+    details = error.get("details")
+    for detail in details if isinstance(details, list) else ():
+        if not isinstance(detail, Mapping):
+            continue
+        detail_type = detail.get("@type")
+        if detail_type == "type.googleapis.com/google.rpc.ErrorInfo":
+            reason = detail.get("reason")
+            if isinstance(reason, str) and reason.lower() in ERROR_TAGS:
+                reasons.append(reason)
+        elif detail_type == "type.googleapis.com/google.rpc.QuotaFailure":
+            violations = detail.get("violations")
+            for violation in violations if isinstance(violations, list) else ():
+                if isinstance(violation, Mapping):
+                    quota.extend(str(violation[field])[:512] for field in (
+                        "quotaId", "quotaMetric", "quotaValue"
+                    ) if isinstance(violation.get(field), (str, int)))
+        elif detail_type == "type.googleapis.com/google.rpc.RetryInfo":
+            value = detail.get("retryDelay")
+            if isinstance(value, str) and re.fullmatch(r"[0-9]{1,12}(?:\.[0-9]{1,9})?s", value):
+                retry_info = max(retry_info or 0, float(value[:-1]))
     # Use untrusted message text only for classification. It can echo whole prompts,
     # credentials, or arbitrary provider response data.
     signals = " ".join(str(value)[:4096] for value in (
-        code, error_type, error.get("message"), getattr(exc, "message", None)
+        code, error_type, error.get("message"), getattr(exc, "message", None), *reasons, *quota
     ) if isinstance(value, (str, int))).lower()
     headers = {}
     for source in (getattr(response, "headers", None), getattr(exc, "headers", None)):
@@ -71,22 +99,28 @@ def diagnose(exc, model, protected_values):
 
     retry_after = headers.get("retry-after")
     retry_seconds = parse_retry_after(retry_after)
+    if retry_info is not None:
+        retry_seconds = max(retry_seconds or 0, retry_info)
     for name in ("retry-after-ms", "x-ms-retry-after-ms"):
         value = headers.get(name)
         if isinstance(value, str) and re.fullmatch(r"[0-9]{1,12}", value):
             retry_seconds = max(retry_seconds or 0, int(value) / 1000)
 
-    if re.search(r"billing.hard.limit|spend(?:ing)?[ _-]+(?:limit|cap)|budget[ _-]+(?:exceeded|limit)|billing.not.active|billing.error", signals):
+    if re.search(r"billing.hard.limit|spend(?:ing)?[ _-]+(?:limit|cap)|budget[ _-]+(?:exceeded|limit)|billing.not.active|billing.error|billing.disabled|free.tier.unavailable|free tier is not available|enable billing", signals):
         category = "spending_limit"
-    elif code in ("insufficient_quota", "quota_exceeded") or re.search(
-        r"insufficient[ _-]quota|credit balance|out of credits|exhausted credits", signals
+    elif "0" in quota or code in ("insufficient_quota", "quota_exceeded") or re.search(
+        r"insufficient[ _-]quota|credit balance|out of credits|exhausted credits|per.?day|\b(?:rpd|tpd)\b|\blimit:\s*0\b", signals
     ):
         category = "insufficient_quota"
-    elif re.search(r"model.not.found|invalid.model|unsupported.model|model.access.denied|(?:do not|don't) have access to (?:it|the model)|model .* does not exist", signals):
+    elif status == 404 or re.search(r"model.not.found|invalid.model|unsupported.model|model.access.denied|(?:do not|don't) have access to (?:it|the model)|model .* does not exist|is not supported for generatecontent", signals):
         category = "model_access"
-    elif status == 401 or code == "invalid_api_key":
+    elif re.search(r"api.key.invalid|api.key.expired|invalid.api.key|api key not valid", signals):
+        category = "invalid_key"
+    elif status in (401, 403) or re.search(r"unauthenticated|api.key.\w+.blocked", signals):
         category = "authentication"
-    elif status == 429 and re.search(r"requests? per min|tokens? per min|\b(?:rpm|tpm)\b", signals):
+    elif status is not None and status >= 500:
+        category = "server_error"
+    elif status == 429 and re.search(r"per.?minute|requests? per min|tokens? per min|\b(?:rpm|tpm)\b", signals):
         category = "temporary_rate_limit"
     elif re.search(r"exceeded your current quota|quota[ _-]exceeded", signals):
         category = "insufficient_quota"
@@ -107,8 +141,10 @@ def diagnose(exc, model, protected_values):
 
     tags = {}
     for name, value in (("error_code", code), ("error_type", error_type),
+                        ("error_reason", next(iter(reasons), None)),
                         ("rate_limit_type", getattr(exc, "rate_limit_type", None))):
-        if isinstance(value, (str, int)) and str(value).lower() in ERROR_TAGS:
+        if (isinstance(value, (str, int)) and str(value).lower() in ERROR_TAGS
+                or name == "error_code" and isinstance(value, int) and 100 <= value <= 599):
             tags[name] = safe(str(value), r"[A-Za-z0-9_]{1,48}")
 
     limits = {

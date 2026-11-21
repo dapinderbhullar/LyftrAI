@@ -6,7 +6,7 @@ jobs:
   compose:
     runs-on: ubuntu-latest
     env:
-      LLM_API_KEYS: ci-placeholder-one,ci-placeholder-two
+      GEMINI_API_KEYS: ci-placeholder-one,ci-placeholder-two
     steps:
       - uses: actions/checkout@v4
       - name: Start both services

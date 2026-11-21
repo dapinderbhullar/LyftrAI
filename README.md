@@ -1,6 +1,6 @@
 # Lyftr Chat
 
-A multi-turn chatbot with React, FastAPI, LiteLLM and SQLite. The browser sends one message at a time, the API restores session context, and each assistant reply includes its resolution source, model, latency and token usage.
+A multi-turn chatbot with React, FastAPI, LiteLLM, the Gemini Developer API, and SQLite. Each reply includes its resolution source, model, latency, and token usage.
 
 ## Live URLs
 
@@ -10,9 +10,23 @@ A multi-turn chatbot with React, FastAPI, LiteLLM and SQLite. The browser sends 
 | Render backend | [lyftrai-backend.onrender.com](https://lyftrai-backend.onrender.com) |
 | Vercel frontend | [lyftr-ai-dusky.vercel.app](https://lyftr-ai-dusky.vercel.app/) |
 
-The public API passes health and CORS checks. Live chat currently returns a provider error. The voice demo is pending.
+The public API previously passed health and CORS checks. The Gemini migration and voice demo still need live verification.
 
-For a Render Docker service, leave **Root Directory** and **Docker Command** blank, set **Dockerfile Path** to `backend/Dockerfile`, and set **Docker Build Context Directory** to `backend`. Use one worker and `/health` as the health probe. Set `LLM_API_KEYS` to two working keys for `LLM_MODEL`, `DATABASE_URL` to `sqlite:////data/app.db`, and `ENABLE_FAILURE_SIMULATION` to `true`. Keep the keys in Render's environment settings. Render provides `PORT`.
+For a Render Docker service, leave **Root Directory** and **Docker Command** blank, set **Dockerfile Path** to `backend/Dockerfile`, and set **Docker Build Context Directory** to `backend`. Use one worker and `/health` as the health probe. Render provides `PORT`.
+
+Set these values in the backend service's **Environment** settings before deploying the migration:
+
+- `GEMINI_API_KEYS` — two or more Gemini keys separated by commas. Remove the previous provider key variable once the migration is deployed.
+- `LLM_MODEL=gemini/gemini-3.5-flash-lite`
+- `DATABASE_URL=sqlite:////data/app.db`
+- `ALLOWED_ORIGINS=https://lyftr-ai-dusky.vercel.app`
+- `ENABLE_FAILURE_SIMULATION=true`
+
+### Gemini keys and quota
+
+Create or select a project in [Google AI Studio](https://aistudio.google.com/apikey) and obtain two Gemini API keys. Store them in the backend environment as one comma-separated value. The order assigns `key_1`, `key_2`, and subsequent IDs. To rotate a key, replace its entry and restart or redeploy the backend.
+
+Google lists free-tier text inference for Gemini 3.5 Flash-Lite in eligible projects. Check the active requests-per-minute, tokens-per-minute, and daily limits in AI Studio. **Keys in the same Google project share its quota.** Failover between those keys does not increase the project's free allowance. [Gemini pricing](https://aistudio.google.com/docs/pricing#gemini-3.5-flash-lite), [rate limits](https://aistudio.google.com/docs/rate-limits), [LiteLLM Gemini configuration](https://docs.litellm.ai/docs/providers/gemini).
 
 For the frontend, import this repository into Vercel on Hobby, select Vite and set the root directory to `frontend`. Set the production variable `VITE_API_URL=https://lyftrai-backend.onrender.com` before deploying. The build command is `npm run build` and output directory is `dist`. Once the frontend URL is assigned, set Render's `ALLOWED_ORIGINS` to that exact HTTPS origin and redeploy the backend. Render Static Sites can use the same Vite settings. The [Render Blueprint](render.yaml) describes a new pair of free Render services.
 
@@ -44,8 +58,8 @@ Vite uses `http://localhost:8000` by default. Set `VITE_API_URL` in the frontend
 
 | Variable | Purpose |
 | --- | --- |
-| `LLM_API_KEYS` | Server-only comma-separated keys, in attempt order |
-| `LLM_MODEL` | LiteLLM provider and model identifier |
+| `GEMINI_API_KEYS` | Server-only comma-separated keys, in attempt order |
+| `LLM_MODEL` | Gemini LiteLLM identifier, defaults to `gemini/gemini-3.5-flash-lite` |
 | `LITELLM_LOCAL_MODEL_COST_MAP` | Use LiteLLM's bundled model metadata to avoid an external fetch during import. Defaults to `True` in the backend image. |
 | `DATABASE_URL` | SQLite file URL, with four slashes for an absolute Unix path |
 | `ALLOWED_ORIGINS` | Comma-separated browser origins |

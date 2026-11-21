@@ -21,6 +21,7 @@ from provider_errors import diagnose, retry_delay
 logger = logging.getLogger(__name__)
 litellm.suppress_debug_info = True
 DEFAULT_PROMPT = "You are a helpful assistant."
+DEFAULT_MODEL = "gemini/gemini-3.5-flash-lite"
 SESSION_LOCKS = [Lock() for _ in range(64)]
 
 
@@ -36,8 +37,10 @@ async def lifespan(app):
     if not url.startswith("sqlite:///") or not url[10:] or url[10:] == ":memory:":
         raise ValueError("DATABASE_URL must point to a SQLite file")
     app.state.database = url[10:]
-    app.state.keys = [key.strip() for key in os.getenv("LLM_API_KEYS", "").split(",") if key.strip()]
-    app.state.model = os.getenv("LLM_MODEL", "openai/gpt-4o-mini")
+    app.state.keys = [key.strip() for key in os.getenv("GEMINI_API_KEYS", "").split(",") if key.strip()]
+    app.state.model = os.getenv("LLM_MODEL", DEFAULT_MODEL).strip()
+    if not app.state.model.startswith("gemini/") or not app.state.model.removeprefix("gemini/"):
+        raise ValueError("LLM_MODEL must use a gemini/ model identifier")
     app.state.simulate = os.getenv("ENABLE_FAILURE_SIMULATION", "").lower() == "true"
     app.state.cache = Cache(type="local", ttl=3600)
     with closing(connect(app)) as db, db:

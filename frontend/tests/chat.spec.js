@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test'
 const endpoint = 'http://localhost:8000/chat'
 const metadata = {
   resolution_source: 'LIVE_INFERENCE',
-  model: 'openai/test-model',
+  model: 'gemini/test-model',
   latency_ms: 316,
   input_tokens: 19,
   output_tokens: 7,
